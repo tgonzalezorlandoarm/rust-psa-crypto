@@ -24,6 +24,7 @@ base64 = "0.12.3"
 
 [features]
 default = ["operations"]
-operations = ["psa-crypto-sys/operations", "interface"]
+prefix = ["psa-crypto-sys/prefix"]
+operations = ["psa-crypto-sys/operations", "psa-crypto-sys/prefix", "interface"]
 interface = ["psa-crypto-sys/interface"]
 std = []

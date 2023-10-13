@@ -19,7 +19,8 @@ regex = "1.9.1"
 walkdir = "2.3.1"
 
 [features]
-default = ["operations"]
+default = ["operations", "prefix"]
 static = []
+prefix = []
 interface = ["bindgen"]
 operations = ["interface"]
