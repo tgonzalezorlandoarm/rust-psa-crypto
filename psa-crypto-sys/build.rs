@@ -35,6 +35,14 @@
 #![allow(clippy::multiple_crate_versions)]
 
 fn main() -> std::io::Result<()> {
+
+    #[cfg(not(feature = "prefix"))]
+    {
+        use std::env;
+        let cargo_pkg_links = "CARGO_PKG_LINKS";
+        env::set_var(cargo_pkg_links, "mbedcrypto");
+    }
+
     #[cfg(feature = "operations")]
     return operations::script_operations();
 
@@ -47,6 +55,7 @@ fn main() -> std::io::Result<()> {
 
 #[cfg(any(feature = "interface", feature = "operations"))]
 mod common {
+    #[cfg(feature = "prefix")]
     use bindgen::callbacks::{ItemInfo, ParseCallbacks};
     use std::env;
     use std::io::{Error, ErrorKind, Result};
@@ -87,17 +96,21 @@ mod common {
         Ok(())
     }
 
+    #[cfg(feature = "prefix")]
     // Cargo provides the crate version from Cargo.toml in the environment.
     const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+    #[cfg(feature = "prefix")]
     // Return a prefix that we hope is globally unique.
     pub fn prefix() -> String {
         format!("psa_crypto_{}_", VERSION.replace('.', "_"))
     }
 
+    #[cfg(feature = "prefix")]
     #[derive(Debug)]
     struct RenameCallbacks {}
 
+    #[cfg(feature = "prefix")]
     impl ParseCallbacks for RenameCallbacks {
         fn generated_link_name_override(&self, info: ItemInfo<'_>) -> Option<String> {
             Some(prefix() + info.name)
@@ -111,6 +124,24 @@ mod common {
 
         let out_dir = env::var("OUT_DIR").unwrap();
 
+        #[cfg(not(feature = "prefix"))]
+        let shim_bindings = bindgen::Builder::default()
+            .clang_arg(format!("-I{}", out_dir))
+            .clang_arg("-DMBEDTLS_CONFIG_FILE=<config.h>")
+            .clang_arg(format!("-I{}", mbed_include_dir))
+            .header("src/c/shim.h")
+            .blocklist_type("max_align_t")
+            .generate_comments(false)
+            .size_t_is_usize(true)
+            .generate()
+            .map_err(|_| {
+                Error::new(
+                    ErrorKind::Other,
+                    "Unable to generate bindings to mbed crypto",
+                )
+            })?;
+        
+        #[cfg(feature = "prefix")]
         let shim_bindings = bindgen::Builder::default()
             .clang_arg(format!("-I{}", out_dir))
             .clang_arg("-DMBEDTLS_CONFIG_FILE=<config.h>")
@@ -127,6 +158,7 @@ mod common {
                     "Unable to generate bindings to mbed crypto",
                 )
             })?;
+
         let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());
         shim_bindings.write_to_file(out_path.join("shim_bindings.rs"))?;
 
@@ -178,10 +210,13 @@ mod interface {
 #[cfg(feature = "operations")]
 mod operations {
     use super::common;
+    #[cfg(feature = "prefix")]
     use super::common::prefix;
     use cmake::Config;
     use std::env;
-    use std::io::{Error, ErrorKind, Result, Write};
+    use std::io::{Error, ErrorKind, Result};
+    #[cfg(feature = "prefix")]
+    use std::io::Write;
     use std::path::PathBuf;
     use walkdir::WalkDir;
 
@@ -212,6 +247,58 @@ mod operations {
         Ok(mbed_build_path)
     }
 
+    #[cfg(not(feature = "prefix"))]
+    fn link_to_lib(lib_path: String, link_statically: bool) {
+        let link_type = if link_statically { "static" } else { "dylib" };
+
+        // Request rustc to link the Mbed Crypto library
+        println!("cargo:rustc-link-search=native={}", lib_path,);
+        println!("cargo:rustc-link-lib={}=mbedcrypto", link_type);
+    }
+
+    #[cfg(not(feature = "prefix"))]
+    // Build script when the operations feature is on
+    pub fn script_operations() -> Result<()> {
+        let lib;
+        let statically;
+        let include;
+
+        if env::var("MBEDTLS_LIB_DIR").is_err() ^ env::var("MBEDTLS_INCLUDE_DIR").is_err() {
+            return Err(Error::new(
+                ErrorKind::Other,
+                "both environment variables MBEDTLS_LIB_DIR and MBEDTLS_INCLUDE_DIR need to be set for operations feature",
+            ));
+        }
+        common::configure_mbed_crypto()?;
+        if let (Ok(lib_dir), Ok(include_dir)) =
+            (env::var("MBEDTLS_LIB_DIR"), env::var("MBEDTLS_INCLUDE_DIR"))
+        {
+            lib = lib_dir;
+            include = include_dir;
+            statically = cfg!(feature = "static") || env::var("MBEDCRYPTO_STATIC").is_ok();
+        } else {
+            println!("Did not find environment variables, building MbedTLS!");
+            let mut mbed_lib_dir = compile_mbed_crypto()?;
+            let mut mbed_include_dir = mbed_lib_dir.clone();
+            mbed_lib_dir.push("lib");
+            mbed_include_dir.push("include");
+
+            lib = mbed_lib_dir.to_str().unwrap().to_owned();
+            include = mbed_include_dir.to_str().unwrap().to_owned();
+            statically = true;
+        }
+
+        // Linking to PSA Crypto library is only needed for the operations.
+        link_to_lib(lib, statically);
+        common::generate_mbed_crypto_bindings(include.clone())?;
+        match common::compile_shim_library(include, false){
+            Ok(_) => Ok(()),
+            Err(e) => Err(e), 
+        }
+
+    }
+
+    #[cfg(feature = "prefix")]
     // Build script when the operations feature is on
     pub fn script_operations() -> Result<()> {
         if env::var("MBEDTLS_LIB_DIR").is_err() ^ env::var("MBEDTLS_INCLUDE_DIR").is_err() {
@@ -220,9 +307,7 @@ mod operations {
                 "both environment variables MBEDTLS_LIB_DIR and MBEDTLS_INCLUDE_DIR need to be set for operations feature",
             ));
         }
-
         common::configure_mbed_crypto()?;
-
         if let (Ok(lib_dir), Ok(include_dir)) =
             (env::var("MBEDTLS_LIB_DIR"), env::var("MBEDTLS_INCLUDE_DIR"))
         {
@@ -264,7 +349,8 @@ mod operations {
 
         Ok(())
     }
-
+    
+    #[cfg(feature = "prefix")]
     pub fn objcopy(liblist: Vec<(PathBuf, PathBuf)>) -> Result<()> {
         // Run nm on the source libraries.
         let mut args = vec![];
