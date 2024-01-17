@@ -143,9 +143,7 @@ mod common {
             .size_t_is_usize(true);
 
         #[cfg(feature = "prefix")]
-        {
-            shim_builder = shim_builder.parse_callbacks(Box::new(RenameCallbacks {}));
-        }
+        shim_builder = shim_builder.parse_callbacks(Box::new(RenameCallbacks {}));
 
         if !external_mbedtls {
             shim_builder =
@@ -176,8 +174,7 @@ mod common {
         let shimlib_name = "libmbedcryptoshim.a";
 
         // Compile and package the shim library
-        let mut cfg = cc::Build::new();
-        _ = cfg
+        let mut cfg = cc::Build::new()
             .include(&out_dir)
             .include(include_dir)
             .file("./src/c/shim.c")
