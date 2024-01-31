@@ -22,6 +22,7 @@
 )]
 #[allow(clippy::all)]
 #[cfg(feature = "interface")]
+#[allow(unused_imports)]
 mod psa_crypto_binding {
     include!(concat!(env!("OUT_DIR"), "/shim_bindings.rs"));
 }
